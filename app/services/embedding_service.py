@@ -1,0 +1,17 @@
+import requests
+
+OLLAMA_URL = "http://ollama:11434/api/embeddings"
+EMBEDDING_MODEL = "nomic-embed-text"
+
+def ollama_embed(text: str):
+    response = requests.post(OLLAMA_URL, json={"model": EMBEDDING_MODEL, "prompt": text})
+    if response.status_code != 200:
+        raise Exception("Failed to get embedding from Ollama")
+    return response.json()["embedding"]
+
+class OllamaEmbeddings:
+    def embed_documents(self, texts):
+        return [ollama_embed(text) for text in texts]
+
+    def embed_query(self, text):
+        return ollama_embed(text)
