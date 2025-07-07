@@ -6,9 +6,9 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from .embedding_service import OllamaEmbeddings
 
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
 embeddings = OllamaEmbeddings()
-llm = OllamaLLM(model="mshojaei77/gemma3persian:latest", base_url="http://ollama:11434")
+llm = OllamaLLM(model="qwen3:latest", base_url="http://ollama:11434")
 
 prompt = ChatPromptTemplate.from_template(
     """
@@ -26,6 +26,7 @@ prompt = ChatPromptTemplate.from_template(
 )
 
 def create_vectorstore(docs, persist_dir=".chroma_db"):
+    print(docs)
     splits = text_splitter.split_documents(docs)
     return Chroma.from_documents(splits, embeddings, persist_directory=persist_dir)
 

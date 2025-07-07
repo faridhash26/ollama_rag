@@ -1,7 +1,7 @@
 import requests
 
 OLLAMA_URL = "http://ollama:11434/api/embeddings"
-EMBEDDING_MODEL = "nomic-embed-text"
+EMBEDDING_MODEL = "all-minilm:latest"
 
 def ollama_embed(text: str):
     response = requests.post(OLLAMA_URL, json={"model": EMBEDDING_MODEL, "prompt": text})
