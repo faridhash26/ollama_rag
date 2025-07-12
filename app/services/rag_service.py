@@ -1,6 +1,8 @@
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_ollama import OllamaLLM
+import os
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
@@ -8,7 +10,10 @@ from .embedding_service import OllamaEmbeddings
 
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
 embeddings = OllamaEmbeddings()
-llm = OllamaLLM(model="qwen3:latest", base_url="http://ollama:11434")
+CHAT_MODEL = os.getenv("CHAT_MODEL", "qwen3:latest")
+CHAT_MODEL_URL = os.getenv("CHAT_MODEL_URL", "http://ollama:11434")
+
+llm = OllamaLLM(model=CHAT_MODEL, base_url=CHAT_MODEL_URL)
 
 prompt = ChatPromptTemplate.from_template(
     """
