@@ -1,7 +1,8 @@
+import os
 import requests
 
-OLLAMA_URL = "http://ollama:11434/api/embeddings"
-EMBEDDING_MODEL = "all-minilm:latest"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/embeddings")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-minilm:latest")
 
 def ollama_embed(text: str):
     response = requests.post(OLLAMA_URL, json={"model": EMBEDDING_MODEL, "prompt": text})
