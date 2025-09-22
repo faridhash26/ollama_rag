@@ -7,7 +7,6 @@ from langchain_core.documents import Document
 from parsivar import Normalizer, Tokenizer
 from typing import List, Dict,Any
 import json
-import pdfplumber
 
 OLLAMA_URL = os.getenv("Embeding_OLLAMA_URL", "http://localhost:11434/api/embeddings")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "aligh4699/heydariAI-persian-embeddings:latest")
@@ -66,7 +65,6 @@ def sanitize_metadata_value(v: Any) -> Any:
         return str(v)
     except Exception:
         return None
-
 def sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     out = {}
     for k, v in (metadata or {}).items():
@@ -88,112 +86,38 @@ def sanitize_documents_for_chroma(docs):
         md_clean = sanitize_metadata(md)
         sanitized.append(Document(page_content=d.page_content, metadata=md_clean))
     return sanitized
-def merge_pages_into_full_sentences(docs: List[Document]) -> List[Document]:
-    groups: Dict[str, List[Document]] = {}
-    for d in docs:
-        source = d.metadata.get('source') or 'UNKNOWN_SOURCE'
-        groups.setdefault(source, []).append(d)
-
+def merge_pages_into_full_sentences(docs):
+    """
+    هر داکیومنت (صفحه) رو به لیست خطوط تبدیل می‌کنه، 
+    خطوط رو با منطق فارسی ادغام می‌کنه، 
+    و یه لیست از داکیومنت‌های جدید با محتوای کامل برمی‌گردونه.
+    """
     merged_docs = []
-    for source, pages in groups.items():
-        try:
-            pages_sorted = sorted(pages, key=lambda x: int(x.metadata.get('page_num', 0)))
-        except Exception:
-            pages_sorted = pages
-
-        buffer_text = ""
-        buffer_meta = {}
-        for page in pages_sorted:
-            page_text = normalize_text_for_persian(page.page_content or "")
-            if buffer_text == "":
-                buffer_text = page_text
-                buffer_meta = page.metadata.copy()
-                buffer_meta['_pages'] = [page.metadata.get('page_num')]
-                continue
-
-            if not ends_with_sentence_terminator(buffer_text):
-                # append if previous didn't end with terminator
-                buffer_text = buffer_text + " " + page_text
-                pages_list = buffer_meta.get('_pages', [])
-                pnum = page.metadata.get('page_num')
-                if pnum is not None:
-                    pages_list.append(pnum)
-                buffer_meta['_pages'] = pages_list
-            else:
-                # flush buffer into sentences
-                try:
-                    sentences = tokenizer.tokenize_sentences(buffer_text)
-                except Exception:
-                    sentences = re.split(r'(?<=[\.!\?؟؛…])\s+', buffer_text)
-                for s in sentences:
-                    s_clean = s.strip()
-                    if s_clean:
-                        md = sanitize_metadata(buffer_meta.copy())
-                        merged_docs.append(Document(page_content=s_clean, metadata=md))
-                # reset buffer
-                buffer_text = page_text
-                buffer_meta = page.metadata.copy()
-                buffer_meta['_pages'] = [page.metadata.get('page_num')]
-
-        # flush remaining buffer
-        if buffer_text:
-            try:
-                sentences = tokenizer.tokenize_sentences(buffer_text)
-            except Exception:
-                sentences = re.split(r'(?<=[\.!\?؟؛…])\s+', buffer_text)
-            for s in sentences:
-                s_clean = s.strip()
-                if s_clean:
-                    md = sanitize_metadata(buffer_meta.copy())
-                    merged_docs.append(Document(page_content=s_clean, metadata=md))
-
+    
+    for doc in docs:
+        page_text = doc.page_content
+        lines = page_text.splitlines()
+        
+        # ادغام خطوط داخل یک صفحه با منطق فارسی
+        merged_lines = merge_lines_by_context([page_text])  # این تابع شماست
+        
+        # هر خط ادغام‌شده یه داکیومنت جدید می‌شه
+        for merged_line in merged_lines:
+            if merged_line.strip():  # حذف خطوط خالی
+                merged_docs.append(
+                    Document(
+                        page_content=merged_line.strip(),
+                        metadata=doc.metadata.copy()  # حفظ متادیتا مثل source, page_num
+                    )
+                )
+    
     return merged_docs
-
-def table_to_text_repr(table: List[List[str]]) -> str:
-    """تبدیل جدول (list of rows) به متن مرتب برای ایندکس شدن."""
-    rows = []
-    for r in table:
-        # join cells by tab یا فاصله — یا می‌تونی JSON ذخیره کنی
-        rows.append("\t".join(cell or "" for cell in r))
-    return "\n".join(rows)
-
-
-
 def ends_with_sentence_terminator(text: str) -> bool:
     if not text or text.strip() == "":
         return True
     t = text.rstrip()
     return bool(_SENT_END_RE.search(t))
 
-def extract_pages_from_pdf(path: str) -> List[Document]:
-    """
-    استخراج صفحات با pdfplumber. هر صفحه -> Document(page_content, metadata={'source': path, 'page_num': i})
-    همچنین سعی می‌کند جدول‌ها را با extract_tables بگیرد و به عنوان metadata ذخیره نکند
-    (اگر می‌خواهی جداول را جدا index کنی بهتر است آن‌ها را به JSON جدا تبدیل کنی — در پایین نشان داده شده)
-    """
-    docs = []
-    with pdfplumber.open(path) as pdf:
-        for i, page in enumerate(pdf.pages, start=1):
-            text = page.extract_text() or ""
-            docs.append(Document(page_content=text, metadata={"source": path, "page_num": i}))
-    return docs
-def extract_tables_from_pdf(path: str) -> List[Dict[str, Any]]:
-    """
-    استخراج جدول‌ها با pdfplumber: خروجی لیست دیکشنری {source, page_num, table_df}
-    (هر table_df یک list-of-rows است؛ می‌توان آن را به JSON یا متن تبدیل کرد)
-    """
-    tables_out = []
-    with pdfplumber.open(path) as pdf:
-        for i, page in enumerate(pdf.pages, start=1):
-            tables = page.extract_tables()
-            for t_idx, table in enumerate(tables):
-                tables_out.append({
-                    "source": path,
-                    "page_num": i,
-                    "table_index": t_idx,
-                    "table": table  # list of rows
-                })
-    return tables_out
 def merge_pages_into_full_sentences(docs: List[Document]) -> List[Document]:
     """
     ورودی: لیست صفحات (Document) با metadata شامل 'source' و 'page_num' (ترجیحا).

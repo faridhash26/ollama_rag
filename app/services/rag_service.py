@@ -6,12 +6,12 @@ import os
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
-from .embedding_service import merge_pages_into_full_sentences
+from .embedding_service import merge_pages_into_full_sentences ,sanitize_documents_for_chroma
 from langchain_ollama import OllamaEmbeddings
 
 
 text_splitter = RecursiveCharacterTextSplitter(
-   chunk_size=800,
+   chunk_size=600,
     chunk_overlap=120,
     separators=[
              "\n\n",                    # پاراگراف
@@ -65,10 +65,16 @@ prompt = ChatPromptTemplate.from_template(
 
 def create_vectorstore(docs, persist_dir=".chroma_db"):
     merged_docs = merge_pages_into_full_sentences(docs)
-    print('merged_docs' ,merged_docs)
-    splits = text_splitter.split_documents(merged_docs)
-    print('splits' ,splits)
+    print('merged_docs count:', len(merged_docs))
+
+    # مهم: metadata ها را sanitize کن
+    safe_docs = sanitize_documents_for_chroma(merged_docs)
+
+    splits = text_splitter.split_documents(safe_docs)
+    print('splits count:', len(splits))
+
     return Chroma.from_documents(splits, embeddings, persist_directory=persist_dir)
+
 
 def get_retriever(persist_dir=".chroma_db"):
     vectorstore = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
