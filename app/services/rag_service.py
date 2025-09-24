@@ -38,11 +38,11 @@ embeddings = OllamaEmbeddings(
     base_url = 'http://localhost:11434'
 )
 CHAT_MODEL = os.getenv("CHAT_MODEL", "Qwen3-30B-A3B")
-CHAT_MODEL_URL = os.getenv("CHAT_MODEL_URL", "https://arvancloudai.ir/gateway/models/Qwen3-30B-A3B/-XKOXRPxxn_Qe7fI0KQpE9E-wxRc2kLrD8UazAroLwhA6Zfsiy9CpXpxhcjlfty4NULSme_p1TWI6k23uEOXPOIAs5DK0wqRVKiWgoVuEYtVaO3ttdXtWBGz8Rpua1T42WGKCrDlMlmpY717iNycteNbJz7SiEjmttMlUAE23C_jmCHCCfvQLYkcZRul152AygSs0w5juttEG1gklFlmeu3RKwvANy1J1nbOmmsGARgFmqiJqLup0OD_Y4IC0jdh/v1")
+CHAT_MODEL_URL = os.getenv("CHAT_MODEL_URL", "https://arvancloudai.ir/gateway/models/Qwen3-30B-A3B/pWcs1fv2u5siLJch1cCHnvyIw6oXDx2eLDK6Ae33icWThd_VdXz4KdurkdFGy0svJZcIeuthMT0Av8a1JIs0etwIBWSq7rjKf5-dH2LbTcKma67lrdfzavueqtuahIMr0ZBmz1gVH18ZaulBMREVy91ZKHa-Kl4_CMe7xAoN0yKD-5GkxTgoVntJK2Qsq3-YlXoB9_nPmPvTgIR0d7rzu8gMcV66H3HuAB_7F6u8uOPcw_p-4rywgwhOl6BITL0j/v1")
 API_KEY =os.getenv("OLLAMA_API_KEY")
 llm = ChatOpenAI(
     model=CHAT_MODEL,
-    api_key='5848f9c7-97a3-5a86-8c6a-8f32063ee517',           # می‌توانی حذف کنی اگر OPENAI_API_KEY در env ست شده
+    api_key='b9e54544-2d8e-573a-8b14-ec8f498c735d',           # می‌توانی حذف کنی اگر OPENAI_API_KEY در env ست شده
     base_url=CHAT_MODEL_URL,         # فقط تا /v1
     timeout=60,
     max_retries=2,
