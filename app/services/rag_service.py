@@ -8,10 +8,13 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from .embedding_service import merge_pages_into_full_sentences ,sanitize_documents_for_chroma ,merge_pages_smart
 from langchain_ollama import OllamaEmbeddings
+from langchain_core.retrievers import BaseRetriever
+from typing import List
+from langchain_core.documents import Document
 
 
 text_splitter = RecursiveCharacterTextSplitter(
-   chunk_size=600,
+   chunk_size=1200,
     chunk_overlap=120,
     separators=[
              "\n\n",                    # پاراگراف
@@ -22,7 +25,7 @@ text_splitter = RecursiveCharacterTextSplitter(
         "، ",                      # ویرگول فارسی + فاصله
         "؛ ",                      # نیمه‌فاصله فارسی
         "—",                       # خط تیره
-        "–",                       # خط تیره کوتاه
+        "–",                       # خط تیره کوتاهchunk_overlap
         ")",                       # بستن پرانتز
         "(",                       # باز کردن پرانتز
         "«",                       # نقل قول فارسی
@@ -46,12 +49,13 @@ llm = ChatOpenAI(
     base_url=CHAT_MODEL_URL,         # فقط تا /v1
     timeout=60,
     max_retries=2,
+    temperature= 0.2
 
 )
 prompt = ChatPromptTemplate.from_template(
     """
     شما یک کمک‌کننده هوشمند برای پاسخ به سوالات دربارهٔ سامانه ساجد هستید. لطفاً فقط اطلاعات موجود در متن مرجع را مبنای کار خود قرار دهید.
-    اگر سوال شما در متن ارائه‌شده پاسخ داده نشده باشد، بنویسید: "فقط به سوال ها در مورد سمانه ساجد میتوانم پاسخ بدم."
+    اگر سوال شما در متن ارائه‌شده پاسخ داده نشده باشد،."
 
 متن مرجع:
 {context}
@@ -64,7 +68,6 @@ prompt = ChatPromptTemplate.from_template(
 )
 
 def create_vectorstore(docs, persist_dir=".chroma_db", merge_strategy="smart"):
-    # docs خروجی extract_docs_from_pdf است (هر صفحه)
     print("input docs:", len(docs))
     merged_docs = merge_pages_smart(docs, strategy=merge_strategy)
     print("after merge:", len(merged_docs))
@@ -73,13 +76,19 @@ def create_vectorstore(docs, persist_dir=".chroma_db", merge_strategy="smart"):
     splits = text_splitter.split_documents(safe_docs)
     print("after split:", len(splits))
 
+    # 👇 این بخش جدید است: اضافه کردن chunk_index بر اساس ترتیب ظاهر شدن
+    for i, doc in enumerate(splits):
+        if doc.metadata is None:
+            doc.metadata = {}
+        doc.metadata["chunk_index"] = i  # شماره ترتیبی کلی
+        # یا اگر می‌خواهید بر اساس source جدا کنید:
+        # doc.metadata["chunk_seq"] = i  # می‌توانید بعداً بهترش کنید
+
     return Chroma.from_documents(splits, embeddings, persist_directory=persist_dir)
 
 def get_retriever(persist_dir=".chroma_db"):
     vectorstore = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
-    return vectorstore.as_retriever(    search_type="mmr",
-    search_kwargs={'k': 5, 'fetch_k': 50}
-    )
+    return ContextualRetriever(vectorstore=vectorstore, k=5, fetch_k=50)
 
 def get_rag_chain(retriever):
     return (
@@ -88,3 +97,69 @@ def get_rag_chain(retriever):
         | llm
         | StrOutputParser()
     )
+
+
+
+class ContextualRetriever(BaseRetriever):
+    vectorstore: Chroma
+    k: int = 5
+    fetch_k: int = 50
+    include_neighbors: bool = True
+
+    def _get_relevant_documents(self, query: str) -> List[Document]:
+        # مرحله ۱: بازیابی اولیه با MMR
+        base_retriever = self.vectorstore.as_retriever(
+            search_type="mmr",
+            search_kwargs={"k": self.k, "fetch_k": self.fetch_k}
+        )
+        initial_docs = base_retriever.invoke(query)
+
+        if not self.include_neighbors:
+            return initial_docs
+
+        # مرحله ۲: جمع‌آوری chunk_index و source هر سند
+        expanded_docs = []
+        seen = set()  # برای جلوگیری از تکرار
+
+        for doc in initial_docs:
+            # اضافه کردن خود سند
+            key = (doc.metadata.get("source"), doc.metadata.get("chunk_index"))
+            if key not in seen:
+                expanded_docs.append(doc)
+                seen.add(key)
+
+            # پیدا کردن chunk قبلی و بعدی (در همان source)
+            current_index = doc.metadata.get("chunk_index")
+            source = doc.metadata.get("source")
+
+            if current_index is None or source is None:
+                continue
+
+            # جستجوی chunk قبلی
+            prev_doc = self._find_chunk_by_index(source, current_index - 1)
+            if prev_doc and (source, current_index - 1) not in seen:
+                expanded_docs.append(prev_doc)
+                seen.add((source, current_index - 1))
+
+            # جستجوی chunk بعدی
+            next_doc = self._find_chunk_by_index(source, current_index + 1)
+            if next_doc and (source, current_index + 1) not in seen:
+                expanded_docs.append(next_doc)
+                seen.add((source, current_index + 1))
+
+        # مرتب‌سازی بر اساس chunk_index برای حفظ ترتیب
+        expanded_docs.sort(key=lambda d: d.metadata.get("chunk_index", 0))
+
+        return expanded_docs
+
+    def _find_chunk_by_index(self, source: str, index: int) -> Document | None:
+        # جستجو در vectorstore با فیلتر
+        try:
+            results = self.vectorstore.similarity_search(
+                "",  # جستجوی خالی — فقط فیلتر مهم است
+                k=1,
+                filter={"source": source, "chunk_index": index}
+            )
+            return results[0] if results else None
+        except Exception:
+            return None
