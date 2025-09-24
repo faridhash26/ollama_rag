@@ -10,7 +10,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 async def handle_upload(file: UploadFile):
     content = await file.read()
     docs = extract_docs_from_pdf(content, file.filename)
-    # create_vectorstore(docs)
+    create_vectorstore(docs)
     return {"message": "successful"}
 
 

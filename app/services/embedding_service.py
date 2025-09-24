@@ -113,10 +113,11 @@ def merge_pages_into_full_sentences(docs):
     
     return merged_docs
 def ends_with_sentence_terminator(text: str) -> bool:
-    if not text or text.strip() == "":
-        return True
-    t = text.rstrip()
-    return bool(_SENT_END_RE.search(t))
+    if not text:
+        return False
+    # اگر خط یا پاراگراف با نقطه یا علامت سؤال یا «؛» یا علامت فارسی ختم شده باشد
+    return bool(_SENT_END_RE.search(text.strip()))
+
 
 def merge_pages_into_full_sentences(docs: List[Document]) -> List[Document]:
     """
@@ -190,16 +191,17 @@ def merge_pages_into_full_sentences(docs: List[Document]) -> List[Document]:
                     merged_docs.append(Document(page_content=s_clean, metadata=md.copy()))
 
     return merged_docs
+
+
 def normalize_text_for_persian(text: str) -> str:
     if not text:
-        return text
-    # حذف شکست هیفونِ صفحه مثل: "کلمه-\nادامه" -> "کلمهادامه" (یا می‌تونی 'کلمه ادامه' بذاری)
+        return ""
+    # حذف شکست هیفون صفحه
     text = re.sub(r'-\s*\n\s*', '', text)
-    # تبدیل newlineهای داخلی (جای شکستِ خطوط) به یک فاصله
-    text = re.sub(r'\s*\n+\s*', ' ', text)
-    # حذف فاصله‌های اضافی
+    # جایگزینی newline های میانی با فاصله (تا پاراگراف‌ها حفظ شوند)
+    text = re.sub(r'\s*\n+\s*', '\n', text)
+    # حذف فاصله اضافی
     text = re.sub(r'[ \t]{2,}', ' ', text).strip()
-    # استفاده از Normalizer پارسی‌وار برای نرمال‌سازی نیم‌فاصله‌ها و تاریخ‌ها و ...
     try:
         text = normalizer.normalize(text)
     except Exception:
@@ -344,3 +346,95 @@ class OllamaEmbeddings:
                 if r.shape[0] != self.dim:
                     raise RuntimeError(f"Inconsistent embedding dim: expected {self.dim}, got {r.shape[0]}")
         return results
+    
+
+
+def merge_pages_smart(docs: List[Document], strategy: str = "smart") -> List[Document]:
+    """
+    strategy:
+      - "per_page": هر صفحه جدا بمونه (بدون ادغام)
+      - "merge_if_no_terminator": اگر صفحه با علامت پایان جمله ختم نشده بود، به صفحه بعد الصاق شود
+      - "smart": مشابه merge_if_no_terminator ولی با محافظت از طول خیلی بزرگ (مثلاً هر merged chunk بیشتر از N کاراکتر نباشد)
+    """
+    # گروه‌بندی بر اساس source
+    groups: Dict[str, List[Document]] = {}
+    for d in docs:
+        md = d.metadata or {}
+        src = md.get("source") or md.get("file_name") or "UNKNOWN_SOURCE"
+        groups.setdefault(src, []).append(d)
+
+    out: List[Document] = []
+
+    MAX_CHUNK_CHARS = 2000  # اگر خیلی طولانی شد، با این حد تقسیم می‌کنیم (قابل تنظیم)
+
+    for src, pages in groups.items():
+        # مرتب سازی بر اساس page_num
+        try:
+            pages_sorted = sorted(pages, key=lambda x: int(x.metadata.get("page_num", 0)))
+        except Exception:
+            pages_sorted = pages
+
+        if strategy == "per_page":
+            # فقط پاک‌سازی و عبور
+            for p in pages_sorted:
+                txt = (p.page_content or "").strip()
+                if txt:
+                    m = p.metadata.copy() if p.metadata else {}
+                    out.append(Document(page_content=txt, metadata=m))
+            continue
+
+        # حالت merge_if_no_terminator یا smart
+        buffer_text = ""
+        buffer_md = None
+        buffer_pages = []
+
+        for p in pages_sorted:
+            text = (p.page_content or "").strip()
+            if text == "":
+                continue
+
+            if buffer_text == "":
+                buffer_text = text
+                buffer_md = p.metadata.copy() if p.metadata else {}
+                buffer_pages = [p.metadata.get("page_num")]
+                continue
+
+            # اگر صفحهٔ قبل با terminator ختم نشده بود -> الصاق کن
+            if not ends_with_sentence_terminator(buffer_text):
+                buffer_text = buffer_text + " " + text
+                buffer_pages.append(p.metadata.get("page_num"))
+            else:
+                # اگر buffer خیلی بزرگ شده و استراتژی smart هست، آن را قطعه قطعه کن
+                if strategy == "smart" and len(buffer_text) > MAX_CHUNK_CHARS:
+                    # تقسیم ساده بر اساس فاصله‌ها (می‌توان بهتر کرد)
+                    parts = []
+                    s = buffer_text
+                    while len(s) > MAX_CHUNK_CHARS:
+                        cut = s.rfind(" ", 0, MAX_CHUNK_CHARS)
+                        if cut <= 0:
+                            cut = MAX_CHUNK_CHARS
+                        parts.append(s[:cut].strip())
+                        s = s[cut:].strip()
+                    if s:
+                        parts.append(s)
+                    for part in parts:
+                        md = buffer_md.copy() if buffer_md else {}
+                        md["_pages"] = buffer_pages.copy()
+                        out.append(Document(page_content=part, metadata=md))
+                else:
+                    md = buffer_md.copy() if buffer_md else {}
+                    md["_pages"] = buffer_pages.copy()
+                    out.append(Document(page_content=buffer_text.strip(), metadata=md))
+
+                # reset buffer با صفحهٔ فعلی
+                buffer_text = text
+                buffer_md = p.metadata.copy() if p.metadata else {}
+                buffer_pages = [p.metadata.get("page_num")]
+
+        # پس از loop صفحات، buffer مانده را اضافه کن
+        if buffer_text:
+            md = buffer_md.copy() if buffer_md else {}
+            md["_pages"] = buffer_pages.copy()
+            out.append(Document(page_content=buffer_text.strip(), metadata=md))
+
+    return out    

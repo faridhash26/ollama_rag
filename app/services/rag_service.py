@@ -6,7 +6,7 @@ import os
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
-from .embedding_service import merge_pages_into_full_sentences ,sanitize_documents_for_chroma
+from .embedding_service import merge_pages_into_full_sentences ,sanitize_documents_for_chroma ,merge_pages_smart
 from langchain_ollama import OllamaEmbeddings
 
 
@@ -63,22 +63,23 @@ prompt = ChatPromptTemplate.from_template(
 """
 )
 
-def create_vectorstore(docs, persist_dir=".chroma_db"):
-    merged_docs = merge_pages_into_full_sentences(docs)
-    print('merged_docs count:', len(merged_docs))
+def create_vectorstore(docs, persist_dir=".chroma_db", merge_strategy="smart"):
+    # docs خروجی extract_docs_from_pdf است (هر صفحه)
+    print("input docs:", len(docs))
+    merged_docs = merge_pages_smart(docs, strategy=merge_strategy)
+    print("after merge:", len(merged_docs))
 
-    # مهم: metadata ها را sanitize کن
     safe_docs = sanitize_documents_for_chroma(merged_docs)
-
     splits = text_splitter.split_documents(safe_docs)
-    print('splits count:', len(splits))
+    print("after split:", len(splits))
 
     return Chroma.from_documents(splits, embeddings, persist_directory=persist_dir)
 
-
 def get_retriever(persist_dir=".chroma_db"):
     vectorstore = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
-    return vectorstore.as_retriever(search_kwargs={"k": 5})
+    return vectorstore.as_retriever(    search_type="mmr",
+    search_kwargs={'k': 5, 'fetch_k': 50}
+    )
 
 def get_rag_chain(retriever):
     return (
