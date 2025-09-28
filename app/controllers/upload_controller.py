@@ -9,10 +9,14 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any
 import os
+from app.controllers.chat_controller import ChatRAGService
+
+from app.services.vector_store import ChromaVectorService
 
 # تردپول برای عملیات سنگین
 executor = ThreadPoolExecutor(max_workers=4)
-
+vector_service = ChromaVectorService(executor=executor)
+rag_service = ChatRAGService()
 # ————————————————————————————————
 # 🖼️ تبدیل صفحه PDF به تصویر
 # ————————————————————————————————
@@ -176,6 +180,9 @@ async def handle_upload(file: UploadFile):
             save_sample_pages(images_for_debug, out_prefix="page_debug")
         except Exception as e:
             print("⚠️ failed saving debug images:", e)
+            
+    combined_text = "\n\n".join(page["full_text"] for page in pages_out if page["full_text"].strip())
+    enhanced_text = await rag_service.enhance_document_text(combined_text)
 
     # بررسی اینکه آیا حداقل یک صفحه پردازش شده
     if len(pages_out) == 0 and len(skipped) > 0:
@@ -183,7 +190,15 @@ async def handle_upload(file: UploadFile):
             "message": "هیچ صفحه‌ای پردازش نشد",
             "errors": skipped
         })
-
+    
+    try:
+        index_ref = await vector_service.index_single_document(
+            filename=file.filename,
+            content=enhanced_text
+        )
+    except Exception as e:
+        print("⚠️ Vector indexing failed:", e)
+        index_ref = ""
     return JSONResponse({
         "filename": file.filename,
         "total_pages": total,
